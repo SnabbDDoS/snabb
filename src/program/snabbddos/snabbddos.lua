@@ -12,7 +12,7 @@ local main      = require("core.main")
 
 local Tap       = require("apps.tap.tap").Tap
 local ddos      = require("apps.ddos.ddos")
-local vlan      = require("apps.vlan.vlan")
+local vlan      = require("apps.ddos.vlan")
 
 local usage = require("program.snabbddos.README_inc")
 
