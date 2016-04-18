@@ -120,25 +120,22 @@ function run (args)
          oif_name = "output"
       end
 
-      config.app(c, "nic_tee", basic_apps.Tee)
-      config.app(c, "dirty_untag", vlan.Untagger, { tag = tonumber(opt.dirty_vlan) })
-      config.app(c, "dirty_tag", vlan.Tagger, { tag = tonumber(opt.dirty_vlan) })
-      config.app(c, "clean_untag", vlan.Untagger, { tag = tonumber(opt.clean_vlan) })
-      config.app(c, "clean_tag", vlan.Tagger, { tag = tonumber(opt.clean_vlan) })
-      config.app(c, "nic_join", basic_apps.Join)
+      config.app(c, "vlan_mux", vlan.VlanMux)
+      config.app(c, "dirty_arp", basic_apps.Tee)
+      config.app(c, "clean_arp", basic_apps.Tee)
       config.app(c, "ddos", ddos.DDoS, { config_file_path = opt.mconfig_file_path })
 
       -- link apps
-      config.link(c, "nic."..oif_name.." -> nic_tee.input")
-      config.link(c, "nic_tee.dirty -> dirty_untag.input")
-      config.link(c, "nic_tee.clean -> clean_untag.input")
+      config.link(c, "nic."..oif_name.." -> vlan_mux.trunk")
+      config.link(c, "vlan_mux.trunk -> nic."..iif_name)
 
-      config.link(c, "dirty_untag.output -> ddos.input")
-      config.link(c, "ddos.output -> clean_tag.input")
+      config.link(c, "vlan_mux.vlan1 -> dirty_arp.south")
+      config.link(c, "vlan_mux.vlan500 -> clean_arp.south")
+      config.link(c, "dirty_arp.south -> vlan_mux.vlan1")
+      config.link(c, "clean_arp.south -> vlan_mux.vlan500")
 
-      config.link(c, "dirty_tag.output -> nic_join.dirty")
-      config.link(c, "clean_tag.output -> nic_join.clean")
-      config.link(c, "nic_join.out -> nic."..iif_name)
+      config.link(c, "dirty_arp.north -> ddos.input")
+      config.link(c, "ddos.output -> clean_arp.north")
 
    else
       -- different physical interfaces for dirty and clean traffic
