@@ -14,6 +14,9 @@ local pf = require("pf")        -- pflua
 
 local C = ffi.C
 
+local htons, htonl = lib.htons, lib.htonl
+local ntohs, ntohl = htons, htonl
+
 DDoS = {}
 
 -- I don't know what I'm doing
@@ -75,6 +78,8 @@ function DDoS:new (arg)
    self.counters["running_mitigations"] = counter.open("snabbddos/running_mitigations")
    self.counters["blacklisted_hosts"] = counter.open("snabbddos/blacklisted_hosts")
    self.counters["num_sources"] = counter.open("snabbddos/num_sources")
+   self.counters["dropped_fragment_packets"] = counter.open("snabbddos/dropped_fragment_packets")
+   self.counters["dropped_fragment_bytes"] = counter.open("snabbddos/dropped_fragment_bytes")
 
    return self
 end
@@ -217,6 +222,33 @@ function DDoS:process_packet(i, o)
    -- IPv4 destination address is 30 bytes in
    local dst_ip = ffi.cast("uint32_t*", packet.data(p) + 30)[0]
 
+   -- retrieve mitigation config
+   local m = self.mitigations[dst_ip]
+   -- no mitigation configured for this dst ip so we pass the packet
+   if not m then
+      counter.add(counters["no_mitigation_packets"])
+      counter.add(counters["no_mitigation_bytes"], p.length)
+      counter.add(counters["passed_packets"])
+      counter.add(counters["passed_bytes"], p.length)
+      link.transmit(o, p)
+      return
+   end
+
+   if m.drop_fragments then
+      -- extract entire 16 bits containing DF, MF, frag offset
+      local p_frag = ntohs(ffi.cast("uint16_t*", packet.data(p) + 20)[0])
+      local p_dofrag = bit.rshift(bit.band(p_frag, 0x4000), 14)
+      local p_morefrag = bit.rshift(bit.band(p_frag, 0x2000), 13)
+      local p_fragoffset = bit.band(p_frag, 0x00FF)
+
+      if p_morefrag == 1 or p_fragoffset ~= 0 then
+         counter.add(counters["dropped_fragment_packets"])
+         counter.add(counters["dropped_fragment_bytes"], p.length)
+         packet.free(p)
+         return
+      end
+   end
+
    -----------------------------------------
 
    -- short cut for stuff in blacklist that is in state block
@@ -235,17 +267,6 @@ function DDoS:process_packet(i, o)
    end
 
    ------------------------------------------
-   -- retrieve mitigation config
-   local m = self.mitigations[dst_ip]
-   -- no mitigation configured for this dst ip so we pass the packet
-   if not m then
-      counter.add(counters["no_mitigation_packets"])
-      counter.add(counters["no_mitigation_bytes"], p.length)
-      counter.add(counters["passed_packets"])
-      counter.add(counters["passed_bytes"], p.length)
-      link.transmit(o, p)
-      return
-   end
 
    -- match up against our filter rules
    local rule = self:bpf_match(p, m.rules)
