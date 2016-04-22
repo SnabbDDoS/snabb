@@ -78,6 +78,10 @@ function DDoS:new (arg)
    self.counters["running_mitigations"] = counter.open("snabbddos/running_mitigations")
    self.counters["blacklisted_hosts"] = counter.open("snabbddos/blacklisted_hosts")
    self.counters["num_sources"] = counter.open("snabbddos/num_sources")
+   self.counters["invalid_ip_version_packets"] = counter.open("snabbddos/invalid_ip_version_packets")
+   self.counters["invalid_ip_version_bytes"] = counter.open("snabbddos/invalid_ip_version_bytes")
+   self.counters["invalid_length_packets"] = counter.open("snabbddos/invalid_length_packets")
+   self.counters["invalid_length_bytes"] = counter.open("snabbddos/invalid_length_bytes")
    self.counters["dropped_fragment_packets"] = counter.open("snabbddos/dropped_fragment_packets")
    self.counters["dropped_fragment_bytes"] = counter.open("snabbddos/dropped_fragment_bytes")
 
@@ -217,6 +221,34 @@ function DDoS:process_packet(i, o)
    end
 
    local afi = "ipv4"
+
+   --- invalid packet checks ---
+   local p_fb = ntohs(ffi.cast("uint16_t*", packet.data(p) + 14)[0])
+   local p_ipversion = bit.rshift(bit.band(p_fb, 0xF000), 12)
+   local p_ihl = bit.rshift(bit.band(p_fb, 0x0F00), 8)
+   -- check IP version - simple since we only support v4
+   if p_ipversion ~= 4 then
+      counter.add(counters["invalid_ip_version_packets"])
+      counter.add(counters["invalid_ip_version_bytes"], p.length)
+      counter.add(counters["blocked_packets"])
+      counter.add(counters["blocked_bytes"], p.length)
+      packet.free(p)
+      return
+   end
+
+   -- is packet length same as what we received on the wire?
+   local p_length = ntohs(ffi.cast("uint16_t*", packet.data(p) + 16)[0])
+   -- minmum length is 60 bytes so if we have something below that it probably
+   -- just means the packet is padded and we can't discard it
+   if p.length > 60 and 14+p_length ~= p.length then
+      counter.add(counters["invalid_length_packets"])
+      counter.add(counters["invalid_length_bytes"], p.length)
+      counter.add(counters["blocked_packets"])
+      counter.add(counters["blocked_bytes"], p.length)
+      packet.free(p)
+      return
+   end
+
    -- IPv4 source address is 26 bytes in
    local src_ip = ffi.cast("uint32_t*", packet.data(p) + 26)[0]
    -- IPv4 destination address is 30 bytes in
